@@ -105,10 +105,8 @@ jobs:
                 name: Build project (without tests)
                 command: |
                   echo "🔨 Building project (without tests)..."
-                  ./gradlew clean assemble --no-scan || {
-                    echo "❌ Build failed"
-                    exit 1
-                  }
+                  ./gradlew clean --no-scan || { echo "❌ Clean failed"; exit 1; }
+                  ./gradlew assemble --no-scan || { echo "❌ Assemble failed"; exit 1; }
                   echo "✅ Project built successfully"
 
       - run: echo "export MSG_DES=\"Failed to collect build artifacts\"" > $BASH_ENV

@@ -23,18 +23,15 @@ import viaduct.engine.api.SelectionSetVariable
 import viaduct.engine.api.select.SelectionsParser
 import viaduct.service.api.spi.Flags
 import viaduct.service.api.spi.mocks.MockFlagManager
+import viaduct.service.runtime.SchemaRegistryConfiguration
 import viaduct.service.runtime.StandardViaduct
-import viaduct.service.runtime.ViaductSchemaRegistryBuilder
 import viaduct.tenant.runtime.bootstrap.ViaductTenantAPIBootstrapper
 import viaduct.tenant.runtime.context.factory.ArgumentsArgs
 import viaduct.tenant.runtime.context.factory.ArgumentsFactory
 import viaduct.tenant.runtime.context.factory.Factory
 import viaduct.tenant.runtime.context.factory.FieldExecutionContextMetaFactory
-import viaduct.tenant.runtime.context.factory.MutationFieldExecutionContextMetaFactory
 import viaduct.tenant.runtime.context.factory.NodeExecutionContextMetaFactory
-import viaduct.tenant.runtime.context.factory.NodeResolverContextFactory
 import viaduct.tenant.runtime.context.factory.ObjectFactory
-import viaduct.tenant.runtime.context.factory.ResolverContextFactory
 import viaduct.tenant.runtime.context.factory.SelectionSetFactory as SelectionSetContextFactory
 import viaduct.tenant.runtime.internal.VariablesProviderInfo
 
@@ -134,17 +131,11 @@ class FeatureTestBuilder {
         val argsFactory = ArgumentsFactory.ifClass(argumentsCls)
             ?: Factory { args: ArgumentsArgs -> ArgumentsStub(args.arguments) }
 
-        val ctxFactory = ResolverContextFactory.ifContext(
-            ctxCls,
-            MutationFieldExecutionContextMetaFactory.ifMutation(
-                ctxCls,
-                FieldExecutionContextMetaFactory.create(
-                    objFactory,
-                    queryFactory,
-                    argsFactory,
-                    SelectionSetContextFactory.forClass(outputCls)
-                )
-            )
+        val ctxFactory = FieldExecutionContextMetaFactory.create(
+            objFactory,
+            queryFactory,
+            argsFactory,
+            SelectionSetContextFactory.forClass(outputCls)
         )
 
         val objectSelections = objectValueFragment?.let { SelectionsParser.parse(coordinate.first, it) }
@@ -232,11 +223,8 @@ class FeatureTestBuilder {
         resolveFn: suspend (ctx: Ctx) -> NodeObject
     ): FeatureTestBuilder {
         val resolver = NodeUnbatchedResolverStub(
-            NodeResolverContextFactory.ifContext(
-                ctxCls,
-                NodeExecutionContextMetaFactory.create(
-                    selections = SelectionSetContextFactory.forTypeName(typeName)
-                )
+            NodeExecutionContextMetaFactory.create(
+                selections = SelectionSetContextFactory.forTypeName(typeName)
             )
         ) { ctx ->
             @Suppress("UNCHECKED_CAST")
@@ -264,11 +252,8 @@ class FeatureTestBuilder {
         batchResolveFn: suspend (ctxs: List<Ctx>) -> List<FieldValue<NodeObject>>
     ): FeatureTestBuilder {
         val resolver = NodeBatchResolverStub(
-            NodeResolverContextFactory.ifContext(
-                ctxCls,
-                NodeExecutionContextMetaFactory.create(
-                    selections = SelectionSetContextFactory.forTypeName(typeName)
-                )
+            NodeExecutionContextMetaFactory.create(
+                selections = SelectionSetContextFactory.forTypeName(typeName)
             )
         ) { ctxs ->
             batchResolveFn(ctxs as List<Ctx>)
@@ -402,11 +387,19 @@ class FeatureTestBuilder {
         @Suppress("DEPRECATION")
         val viaductTenantAPIBootstrapperBuilder = ViaductTenantAPIBootstrapper.Builder().tenantPackageFinder(tenantPackageFinder)
         val builders = listOf(viaductTenantAPIBootstrapperBuilder, featureTestTenantAPIBootstrapperBuilder)
-        val viaductSchemaRegistryBuilder = ViaductSchemaRegistryBuilder()
-            .withFullSchemaFromSdl(sdl)
-            .apply {
-                scopedSchemaSdl?.let { registerSchemaFromSdl(SCHEMA_ID, it) } ?: registerFullSchema(SCHEMA_ID)
-            }
+        val schemaRegistryConfiguration = if (scopedSchemaSdl != null) {
+            // Register scoped schema when scopedSchemaSdl is provided
+            SchemaRegistryConfiguration.fromSdl(
+                sdl = sdl,
+                scopes = setOf(SchemaRegistryConfiguration.ScopeConfig(SCHEMA_ID, emptySet()))
+            )
+        } else {
+            // Register full schema when no scoped SDL
+            SchemaRegistryConfiguration.fromSdl(
+                sdl = sdl,
+                fullSchemaIds = listOf(SCHEMA_ID)
+            )
+        }
 
         val standardViaduct = StandardViaduct.Builder()
             .withTenantAPIBootstrapperBuilders(builders)
@@ -415,7 +408,7 @@ class FeatureTestBuilder {
                     Flags.EXECUTE_ACCESS_CHECKS_IN_MODERN_EXECUTION_STRATEGY
                 )
             )
-            .withSchemaRegistryBuilder(viaductSchemaRegistryBuilder)
+            .withSchemaRegistryConfiguration(schemaRegistryConfiguration)
             .withCheckerExecutorFactory(
                 object : CheckerExecutorFactory {
                     override fun checkerExecutorForField(
